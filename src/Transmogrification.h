@@ -27,8 +27,12 @@ struct ItemTemplate;
 
 enum TransmogSettings
 {
-    SETTING_HIDE_TRANSMOG = 0,
-    SETTING_RETROACTIVE_CHECK = 1
+    SETTING_HIDE_TRANSMOG             = 0,
+    SETTING_RETROACTIVE_CHECK         = 1,
+    SETTING_VENDOR_INTERFACE          = 2,
+
+    // Subscriptions
+    SETTING_TRANSMOG_MEMBERSHIP_LEVEL = 0
 };
 
 enum MixedWeaponSettings
@@ -61,12 +65,43 @@ enum TransmogAcoreStrings // Language.h might have same entries, appears when ex
     LANG_CMD_TRANSMOG_ADD_FORBIDDEN = 11114,
     LANG_CMD_TRANSMOG_BEGIN_SYNC = 11115,
     LANG_CMD_TRANSMOG_COMPLETE_SYNC = 11116,
+    LANG_CMD_TRANSMOG_VENDOR_INTERFACE_ENABLE = 11117,
+    LANG_CMD_TRANSMOG_VENDOR_INTERFACE_DISABLE = 11118
 };
 
-enum TransmogSpells
+enum ArmorClassSpellIDs
 {
-    SPELL_SUMMON_ETHEREAL_WARPWEAVER = 2000100
+    SPELL_PLATE   = 750,
+    SPELL_MAIL    = 8737,
+    SPELL_LEATHER = 9077,
+    SPELL_CLOTH   = 9078
 };
+
+const uint32 AllArmorSpellIds[4] =
+{
+    SPELL_PLATE,
+    SPELL_MAIL,
+    SPELL_LEATHER,
+    SPELL_CLOTH
+};
+
+const uint32 AllArmorTiers[4] =
+{
+    ITEM_SUBCLASS_ARMOR_PLATE,
+    ITEM_SUBCLASS_ARMOR_MAIL,
+    ITEM_SUBCLASS_ARMOR_LEATHER,
+    ITEM_SUBCLASS_ARMOR_CLOTH
+};
+
+enum PlusFeatures
+{
+    PLUS_FEATURE_GREY_ITEMS,
+    PLUS_FEATURE_LEGENDARY_ITEMS,
+    PLUS_FEATURE_PET,
+    PLUS_FEATURE_SKIP_LEVEL_REQ
+};
+
+const uint32 TMOG_VENDOR_CREATURE_ID = 190010;
 
 class Transmogrification
 {
@@ -78,9 +113,14 @@ public:
     typedef std::unordered_map<ObjectGuid, transmog2Data> transmogMap;
     typedef std::unordered_map<uint32, std::vector<uint32>> collectionCacheMap;
     typedef std::unordered_map<uint32, std::string> searchStringMap;
+    typedef std::unordered_map<uint32, std::vector<uint32>> transmogPlusData;
+    typedef std::unordered_map<ObjectGuid, uint8> selectedSlotMap;
+    
+    transmogPlusData plusDataMap;
     transmogMap entryMap; // entryMap[pGUID][iGUID] = entry
     transmogData dataMap; // dataMap[iGUID] = pGUID
     collectionCacheMap collectionCache;
+    selectedSlotMap selectionCache;
 
 #ifdef PRESETS
     bool EnableSetInfo;
@@ -137,6 +177,8 @@ public:
     bool AllowTradeable;
 
     bool AllowMixedArmorTypes;
+    bool AllowLowerTiers;
+    bool AllowMixedOffhandArmorTypes;
     bool AllowMixedWeaponHandedness;
     bool AllowFishingPoles;
 
@@ -151,7 +193,11 @@ public:
     bool IgnoreReqStats;
 
     bool UseCollectionSystem;
+    bool UseVendorInterface;
+    
     bool AllowHiddenTransmog;
+    bool HiddenTransmogIsFree;
+    
     bool TrackUnusableItems;
     bool RetroActiveAppearances;
     bool ResetRetroActiveAppearances;
@@ -161,7 +207,7 @@ public:
 
     bool IsAllowed(uint32 entry) const;
     bool IsNotAllowed(uint32 entry) const;
-    bool IsAllowedQuality(uint32 quality) const;
+    bool IsAllowedQuality(uint32 quality, ObjectGuid const & playerGuid) const;
     bool IsRangedWeapon(uint32 Class, uint32 SubClass) const;
     bool CanNeverTransmog(ItemTemplate const* itemTemplate);
 
@@ -184,7 +230,7 @@ public:
     bool CanTransmogrifyItemWithItem(Player* player, ItemTemplate const* destination, ItemTemplate const* source) const;
     bool SuitableForTransmogrification(Player* player, ItemTemplate const* proto) const;
     bool SuitableForTransmogrification(ObjectGuid guid, ItemTemplate const* proto) const;
-    bool IsItemTransmogrifiable(ItemTemplate const* proto) const;
+    bool IsItemTransmogrifiable(ItemTemplate const* proto, ObjectGuid const &playerGuid) const;
     uint32 GetSpecialPrice(ItemTemplate const* proto) const;
 
     void DeleteFakeFromDB(ObjectGuid::LowType itemLowGuid, CharacterDatabaseTransaction* trans = nullptr);
@@ -196,6 +242,8 @@ public:
     uint32 GetTokenAmount() const;
 
     bool GetAllowMixedArmorTypes() const;
+    bool GetAllowLowerTiers() const;
+    bool GetAllowMixedOffhandArmorTypes() const;
     uint8 GetAllowMixedWeaponTypes() const;
 
     // Config
@@ -206,11 +254,34 @@ public:
     bool GetAllowTradeable() const;
 
     bool GetUseCollectionSystem() const;
+    bool GetUseVendorInterface() const;
     bool GetAllowHiddenTransmog() const;
+    bool GetHiddenTransmogIsFree() const;
     bool GetTrackUnusableItems() const;
     bool EnableRetroActiveAppearances() const;
     bool EnableResetRetroActiveAppearances() const;
     [[nodiscard]] bool IsEnabled() const;
+
+    bool IsValidOffhandArmor(uint32 subclass, uint32 invType) const;
+    bool IsTieredArmorSubclass(uint32 subclass) const;
+
+    uint32 GetHighestAvailableForPlayer(Player* player) const;
+    uint32 GetHighestAvailableForPlayer(int playerGuid) const;
+
+    bool TierAvailable(Player* player, int playerGuid, uint32 tierSpell) const;
+    
+    bool IsInvTypeMismatchAllowed (const ItemTemplate *source, const ItemTemplate *target) const;
+    bool IsSubclassMismatchAllowed (Player *player, const ItemTemplate *source, const ItemTemplate *target) const;
+
+    // Transmog Plus
+    bool IsTransmogPlusEnabled;
+    [[nodiscard]] bool IsPlusFeatureEligible(ObjectGuid const& playerGuid, uint32 feature) const;
+    [[nodiscard]] uint32 GetPlayerMembershipLevel(Player* player) const { return player->GetPlayerSetting("acore_cms_subscriptions", SETTING_TRANSMOG_MEMBERSHIP_LEVEL).value; };
+    [[nodiscard]] bool IgnoreLevelRequirement(ObjectGuid const& playerGuid) const { return IgnoreReqLevel || IsPlusFeatureEligible(playerGuid, PLUS_FEATURE_SKIP_LEVEL_REQ); }
+
+    uint32 PetSpellId;
+    uint32 PetEntry;
+    [[nodiscard]] bool IsTransmogVendor(uint32 entry) const { return entry == TMOG_VENDOR_CREATURE_ID || entry == PetEntry; };
 };
 #define sTransmogrification Transmogrification::instance()
 

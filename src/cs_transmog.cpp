@@ -40,10 +40,11 @@ public:
 
         static ChatCommandTable transmogTable =
         {
-            { "add",      addCollectionTable                                        },
-            { "",         HandleDisableTransMogVisual,   SEC_PLAYER,    Console::No },
-            { "sync",     HandleSyncTransMogCommand,     SEC_PLAYER,    Console::No },
-            { "portable", HandleTransmogPortableCommand, SEC_MODERATOR, Console::No },
+            { "add",       addCollectionTable                                        },
+            { "",          HandleDisableTransMogVisual,   SEC_PLAYER,    Console::No },
+            { "sync",      HandleSyncTransMogCommand,     SEC_PLAYER,    Console::No },
+            { "portable",  HandleTransmogPortableCommand, SEC_PLAYER,    Console::No },
+            { "interface", HandleInterfaceOption,         SEC_PLAYER,    Console::No }
         };
 
         static ChatCommandTable commandTable =
@@ -59,10 +60,10 @@ public:
         Player* player = handler->GetPlayer();
         uint32 accountId = player->GetSession()->GetAccountId();
         handler->SendSysMessage(LANG_CMD_TRANSMOG_BEGIN_SYNC);
+        
         for (uint32 itemId : sTransmogrification->collectionCache[accountId])
-        {
-            handler->PSendSysMessage("TRANSMOG_SYNC:%u", itemId);
-        }
+            handler->PSendSysMessage("TRANSMOG_SYNC:{}", itemId);
+        
         handler->SendSysMessage(LANG_CMD_TRANSMOG_COMPLETE_SYNC);
         return true;
     }
@@ -99,27 +100,19 @@ public:
         }
 
         if (!player)
-        {
             player = PlayerIdentifier::FromTargetOrSelf(handler);
-        }
 
         if (!player)
-        {
             return false;
-        }
 
         Player* target = player->GetConnectedPlayer();
         bool isNotConsole = handler->GetSession();
         bool suitableForTransmog;
 
         if (target)
-        {
             suitableForTransmog = sTransmogrification->SuitableForTransmogrification(target, itemTemplate);
-        }
         else
-        {
             suitableForTransmog = sTransmogrification->SuitableForTransmogrification(player->GetGUID(), itemTemplate);
-        }
 
         if (!sTransmogrification->GetTrackUnusableItems() && !suitableForTransmog)
         {
@@ -144,10 +137,12 @@ public:
         std::string itemQuality = tempStream.str();
         std::string itemName = itemTemplate->Name1;
 
-        // get locale item name
-        int loc_idex = target->GetSession()->GetSessionDbLocaleIndex();
-        if (ItemLocale const* il = sObjectMgr->GetItemLocale(itemId))
-            ObjectMgr::GetLocaleString(il->Name, loc_idex, itemName);
+        if (target) {
+            // get locale item name
+            int loc_idex = target->GetSession()->GetSessionDbLocaleIndex();
+            if (ItemLocale const* il = sObjectMgr->GetItemLocale(itemId))
+                ObjectMgr::GetLocaleString(il->Name, loc_idex, itemName);
+        }
 
         std::string playerName = player->GetName();
         std::string nameLink = handler->playerLink(playerName);
@@ -156,15 +151,11 @@ public:
         {
             // Notify target of new item in appearance collection
             if (target && !(target->GetPlayerSetting("mod-transmog", SETTING_HIDE_TRANSMOG).value) && !sTransmogrification->CanNeverTransmog(itemTemplate))
-            {
-                ChatHandler(target->GetSession()).PSendSysMessage(R"(|c%s|Hitem:%u:0:0:0:0:0:0:0:0|h[%s]|h|r has been added to your appearance collection.)", itemQuality.c_str(), itemId, itemName.c_str());
-            }
+                ChatHandler(target->GetSession()).PSendSysMessage(R"(|c{}|Hitem:{}:0:0:0:0:0:0:0:0|h[{}]|h|r has been added to your appearance collection.)", itemQuality.c_str(), itemId, itemName.c_str());
 
             // Feedback of successful command execution to GM
             if (isNotConsole && target != handler->GetPlayer())
-            {
-                handler->PSendSysMessage(R"(|c%s|Hitem:%u:0:0:0:0:0:0:0:0|h[%s]|h|r has been added to the appearance collection of Player %s.)", itemQuality.c_str(), itemId, itemName.c_str(), nameLink);
-            }
+                handler->PSendSysMessage(R"(|c{}|Hitem:{}:0:0:0:0:0:0:0:0|h[{}]|h|r has been added to the appearance collection of Player {}.)", itemQuality.c_str(), itemId, itemName.c_str(), nameLink);
 
             CharacterDatabase.Execute("INSERT INTO custom_unlocked_appearances (account_id, item_template_id) VALUES ({}, {})", accountId, itemId);
         }
@@ -173,7 +164,7 @@ public:
             // Feedback of failed command execution to GM
             if (isNotConsole)
             {
-                handler->PSendSysMessage(R"(Player %s already has item |c%s|Hitem:%u:0:0:0:0:0:0:0:0|h[%s]|h|r in the appearance collection.)", nameLink, itemQuality.c_str(), itemId, itemName.c_str());
+                handler->PSendSysMessage(R"(Player {} already has item |c{}|Hitem:{}:0:0:0:0:0:0:0:0|h[{}]|h|r in the appearance collection.)", nameLink, itemQuality.c_str(), itemId, itemName.c_str());
                 handler->SetSentErrorMessage(true);
             }
         }
@@ -194,14 +185,10 @@ public:
         }
 
         if (!player)
-        {
             player = PlayerIdentifier::FromTargetOrSelf(handler);
-        }
 
         if (!player)
-        {
             return false;
-        }
 
         Player* target = player->GetConnectedPlayer();
         ItemSetEntry const* set = sItemSetStore.LookupEntry(uint32(itemSetId));
@@ -272,23 +259,19 @@ public:
             // Failed command execution
             if (!added)
             {
-                handler->PSendSysMessage("Player %s already has ItemSet |cffffffff|Hitemset:%d|h[%s %s]|h|r in the appearance collection.", nameLink, uint32(itemSetId), setName.c_str(), localeNames[locale]);
+                handler->PSendSysMessage("Player {} already has ItemSet |cffffffff|Hitemset:{}|h[{} {}]|h|r in the appearance collection.", nameLink, uint32(itemSetId), setName.c_str(), localeNames[locale]);
                 handler->SetSentErrorMessage(true);
                 return true;
             }
 
             // Successful command execution
             if (target != handler->GetPlayer())
-            {
-                handler->PSendSysMessage("ItemSet |cffffffff|Hitemset:%d|h[%s %s]|h|r has been added to the appearance collection of Player %s.", uint32(itemSetId), setName.c_str(), localeNames[locale], nameLink);
-            }
+                handler->PSendSysMessage("ItemSet |cffffffff|Hitemset:{}|h[{} {}]|h|r has been added to the appearance collection of Player {}.", uint32(itemSetId), setName.c_str(), localeNames[locale], nameLink);
         }
 
         // Notify target of new item in appearance collection
         if (target && !(target->GetPlayerSetting("mod-transmog", SETTING_HIDE_TRANSMOG).value))
-        {
-            ChatHandler(target->GetSession()).PSendSysMessage("ItemSet |cffffffff|Hitemset:%d|h[%s %s]|h|r has been added to your appearance collection.", uint32(itemSetId), setName.c_str(), localeNames[locale]);
-        }
+            ChatHandler(target->GetSession()).PSendSysMessage("ItemSet |cffffffff|Hitemset:%d|h[{} {}]|h|r has been added to your appearance collection.", uint32(itemSetId), setName.c_str(), localeNames[locale]);
 
         return true;
     }
@@ -304,10 +287,29 @@ public:
 
         if (Player* player = PlayerIdentifier::FromSelf(handler)->GetConnectedPlayer())
         {
-            player->CastSpell((Unit*)nullptr, SPELL_SUMMON_ETHEREAL_WARPWEAVER, true);
+
+            if (sTransmogrification->IsTransmogPlusEnabled)
+                if (sTransmogrification->IsPlusFeatureEligible(player->GetGUID(), PLUS_FEATURE_PET))
+                {
+                    player->CastSpell((Unit*)nullptr, sTransmogrification->PetSpellId, true);
+                    return true;
+                }
+
+            if (player->GetSession()->GetSecurity() < SEC_MODERATOR)
+                return true;
+
+            player->CastSpell((Unit*)nullptr, sTransmogrification->PetSpellId, true);
         }
+
         return true;
     };
+
+    static bool HandleInterfaceOption(ChatHandler* handler, bool enable)
+    {
+        handler->GetPlayer()->UpdatePlayerSetting("mod-transmog", SETTING_VENDOR_INTERFACE, enable);
+        handler->SendSysMessage(enable ? LANG_CMD_TRANSMOG_VENDOR_INTERFACE_ENABLE : LANG_CMD_TRANSMOG_VENDOR_INTERFACE_DISABLE);
+        return true;
+    }
 };
 
 void AddSC_transmog_commandscript()

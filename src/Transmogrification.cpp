@@ -1,6 +1,9 @@
 #include "Transmogrification.h"
 #include "ItemTemplate.h"
 #include "DatabaseEnv.h"
+#include "SpellMgr.h"
+#include "Tokenize.h"
+#include "WorldSessionMgr.h"
 
 Transmogrification* Transmogrification::instance()
 {
@@ -203,7 +206,7 @@ const char* Transmogrification::GetSlotName(uint8 slot, WorldSession* session) c
             { LOCALE_frFR, "Pieds" },
             { LOCALE_deDE, "Füße" },
             { LOCALE_zhCN, "脚" },
-            { LOCALE_zhTW, "เท้า" },
+            { LOCALE_zhTW, "腳" },
             { LOCALE_esES, "Pies" },
             { LOCALE_esMX, "Pies" },
             { LOCALE_ruRU, "Ступни" }
@@ -213,7 +216,7 @@ const char* Transmogrification::GetSlotName(uint8 slot, WorldSession* session) c
             { LOCALE_frFR, "Poignets" },
             { LOCALE_deDE, "Handgelenke" },
             { LOCALE_zhCN, "腕部" },
-            { LOCALE_zhTW, "ข้อมือ" },
+            { LOCALE_zhTW, "手腕" },
             { LOCALE_esES, "Muñecas" },
             { LOCALE_esMX, "Muñecas" },
             { LOCALE_ruRU, "Запястья" }
@@ -223,7 +226,7 @@ const char* Transmogrification::GetSlotName(uint8 slot, WorldSession* session) c
             { LOCALE_frFR, "Mains" },
             { LOCALE_deDE, "Hände" },
             { LOCALE_zhCN, "手" },
-            { LOCALE_zhTW, "มือ" },
+            { LOCALE_zhTW, "手" },
             { LOCALE_esES, "Manos" },
             { LOCALE_esMX, "Manos" },
             { LOCALE_ruRU, "Кисти рук" }
@@ -233,7 +236,7 @@ const char* Transmogrification::GetSlotName(uint8 slot, WorldSession* session) c
             { LOCALE_frFR, "Dos" },
             { LOCALE_deDE, "Rücken" },
             { LOCALE_zhCN, "背部" },
-            { LOCALE_zhTW, "หลัง" },
+            { LOCALE_zhTW, "背部" },
             { LOCALE_esES, "Espalda" },
             { LOCALE_esMX, "Espalda" },
             { LOCALE_ruRU, "Спина" }
@@ -243,7 +246,7 @@ const char* Transmogrification::GetSlotName(uint8 slot, WorldSession* session) c
             { LOCALE_frFR, "Main droite" },
             { LOCALE_deDE, "Haupthand" },
             { LOCALE_zhCN, "主手" },
-            { LOCALE_zhTW, "มือหนึ่ง" },
+            { LOCALE_zhTW, "主手" },
             { LOCALE_esES, "Mano derecha" },
             { LOCALE_esMX, "Mano derecha" },
             { LOCALE_ruRU, "Правая рука" }
@@ -253,7 +256,7 @@ const char* Transmogrification::GetSlotName(uint8 slot, WorldSession* session) c
             { LOCALE_frFR, "Main gauche" },
             { LOCALE_deDE, "Nebenhand" },
             { LOCALE_zhCN, "副手" },
-            { LOCALE_zhTW, "มือสอง" },
+            { LOCALE_zhTW, "副手" },
             { LOCALE_esES, "Mano izquierda" },
             { LOCALE_esMX, "Mano izquierda" },
             { LOCALE_ruRU, "Левая рука" }
@@ -263,7 +266,7 @@ const char* Transmogrification::GetSlotName(uint8 slot, WorldSession* session) c
             { LOCALE_frFR, "À distance" },
             { LOCALE_deDE, "Distanz" },
             { LOCALE_zhCN, "远程" },
-            { LOCALE_zhTW, "ระยะไกล" },
+            { LOCALE_zhTW, "遠程" },
             { LOCALE_esES, "A distancia" },
             { LOCALE_esMX, "A distancia" },
             { LOCALE_ruRU, "Дальний бой" }
@@ -388,7 +391,7 @@ std::string Transmogrification::GetItemLink(Item* item, WorldSession* session) c
         item->GetEnchantmentId(SOCK_ENCHANTMENT_SLOT_3) << ":" <<
         item->GetEnchantmentId(BONUS_ENCHANTMENT_SLOT) << ":" <<
         item->GetItemRandomPropertyId() << ":" << item->GetItemSuffixFactor() << ":" <<
-//        (uint32)item->GetOwner()->getLevel() << "|h[" << name << "]|h|r";
+//        (uint32)item->GetOwner()->GetLevel() << "|h[" << name << "]|h|r";
         (uint32)0 << "|h[" << name << "]|h|r";
 
     return oss.str();
@@ -470,7 +473,11 @@ bool Transmogrification::AddCollectedAppearance(uint32 accountId, uint32 itemId)
     if (std::find(collectionCache[accountId].begin(), collectionCache[accountId].end(), itemId) == collectionCache[accountId].end())
     {
         collectionCache[accountId].push_back(itemId);
-        std::sort(collectionCache[accountId].begin(), collectionCache[accountId].end());
+
+        if (!sConfigMgr->GetOption<bool>("Transmogrification.EnableSortByQualityAndName", true)) {
+            std::sort(collectionCache[accountId].begin(), collectionCache[accountId].end());
+        }
+
         return true;
     }
     return false;
@@ -520,6 +527,22 @@ TransmogAcoreStrings Transmogrification::Transmogrify(Player* player, Item* item
 
     if (hidden_transmog)
     {
+        cost = GetSpecialPrice(itemTransmogrified->GetTemplate());
+        cost *= ScaledCostModifier;
+        cost += CopperCost;
+
+        if (!HiddenTransmogIsFree && cost)
+        {
+            if (cost < 0)
+                LOG_DEBUG("module", "Transmogrification::Transmogrify - {} ({}) transmogrification invalid cost (non negative, amount {}). Transmogrified {} with {}",
+                    player->GetName(), player->GetGUID().ToString(), -cost, itemTransmogrified->GetEntry(), itemTransmogrifier->GetEntry());
+            else
+            {
+                if (!player->HasEnoughMoney(cost))
+                    return LANG_ERR_TRANSMOG_NOT_ENOUGH_MONEY;
+                player->ModifyMoney(-cost, false);
+            }
+        }
         SetFakeEntry(player, HIDDEN_ITEM_ID, slot, itemTransmogrified); // newEntry
         return LANG_ERR_TRANSMOG_OK;
     }
@@ -574,7 +597,7 @@ TransmogAcoreStrings Transmogrification::Transmogrify(Player* player, Item* item
         itemTransmogrified->SetNotRefundable(player);
         itemTransmogrified->ClearSoulboundTradeable(player);
 
-        if (itemTransmogrifier->GetTemplate()->Bonding == BIND_WHEN_EQUIPED || itemTransmogrifier->GetTemplate()->Bonding == BIND_WHEN_USE)
+        if (itemTransmogrifier->GetTemplate()->Bonding == BIND_WHEN_EQUIPPED || itemTransmogrifier->GetTemplate()->Bonding == BIND_WHEN_USE)
             itemTransmogrifier->SetBinding(true);
 
         itemTransmogrifier->SetOwnerGUID(player->GetGUID());
@@ -624,87 +647,127 @@ bool Transmogrification::CanTransmogrifyItemWithItem(Player* player, ItemTemplat
     if (IsRangedWeapon(source->Class, source->SubClass) != IsRangedWeapon(target->Class, target->SubClass))
         return false;
 
-    if (source->SubClass != target->SubClass && !IsRangedWeapon(target->Class, target->SubClass))
-    {
-        if (!IsAllowed(source->ItemId))
-        {
-            if (source->Class == ITEM_CLASS_ARMOR && !AllowMixedArmorTypes)
-                return false;
-            if (source->Class == ITEM_CLASS_WEAPON)
-            {
-                if (AllowMixedWeaponTypes == MIXED_WEAPONS_STRICT)
-                {
-                    return false;
-                }
-                if (AllowMixedWeaponTypes == MIXED_WEAPONS_MODERN)
-                {
-                    switch (source->SubClass)
-                    {
-                        case ITEM_SUBCLASS_WEAPON_WAND:
-                        case ITEM_SUBCLASS_WEAPON_DAGGER:
-                        case ITEM_SUBCLASS_WEAPON_FIST:
-                            return false;
-                        case ITEM_SUBCLASS_WEAPON_AXE:
-                        case ITEM_SUBCLASS_WEAPON_SWORD:
-                        case ITEM_SUBCLASS_WEAPON_MACE:
-                            if (target->SubClass != ITEM_SUBCLASS_WEAPON_MACE &&
-                                target->SubClass != ITEM_SUBCLASS_WEAPON_AXE &&
-                                target->SubClass != ITEM_SUBCLASS_WEAPON_SWORD)
-                            {
-                                return false;
-                            }
-                            break;
-                        case ITEM_SUBCLASS_WEAPON_AXE2:
-                        case ITEM_SUBCLASS_WEAPON_SWORD2:
-                        case ITEM_SUBCLASS_WEAPON_MACE2:
-                        case ITEM_SUBCLASS_WEAPON_STAFF:
-                        case ITEM_SUBCLASS_WEAPON_POLEARM:
-                            if (target->SubClass != ITEM_SUBCLASS_WEAPON_MACE2 &&
-                                target->SubClass != ITEM_SUBCLASS_WEAPON_AXE2 &&
-                                target->SubClass != ITEM_SUBCLASS_WEAPON_SWORD2 &&
-                                target->SubClass != ITEM_SUBCLASS_WEAPON_STAFF &&
-                                target->SubClass != ITEM_SUBCLASS_WEAPON_POLEARM)
-                            {
-                                return false;
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                }
-            }
-        }
-    }
+    if (source->SubClass != target->SubClass && !IsSubclassMismatchAllowed(player, source, target))
+        return false;
 
-    if (source->InventoryType != target->InventoryType)
-    {
-
-        // Main-hand to offhand restrictions - see https://wowpedia.fandom.com/wiki/Transmogrification
-        if (!AllowMixedWeaponHandedness && AllowMixedWeaponTypes != MIXED_WEAPONS_LOOSE)
-        {
-            if ((source->InventoryType == INVTYPE_WEAPONMAINHAND && target->InventoryType != INVTYPE_WEAPONMAINHAND) ||
-                (source->InventoryType == INVTYPE_WEAPONOFFHAND && target->InventoryType != INVTYPE_WEAPONOFFHAND))
-            {
-                return false;
-            }
-
-        }
-
-        if (source->Class == ITEM_CLASS_WEAPON && !(IsRangedWeapon(target->Class, target->SubClass) ||
-            (
-                // [AZTH] Yehonal: fixed weapon check
-                (target->InventoryType == INVTYPE_WEAPON || target->InventoryType == INVTYPE_2HWEAPON || target->InventoryType == INVTYPE_WEAPONMAINHAND || target->InventoryType == INVTYPE_WEAPONOFFHAND)
-                && (source->InventoryType == INVTYPE_WEAPON || source->InventoryType == INVTYPE_2HWEAPON || source->InventoryType == INVTYPE_WEAPONMAINHAND || source->InventoryType == INVTYPE_WEAPONOFFHAND)
-            )
-        ))
-            return false;
-        if (source->Class == ITEM_CLASS_ARMOR &&
-            !((source->InventoryType == INVTYPE_CHEST || source->InventoryType == INVTYPE_ROBE) &&
-                (target->InventoryType == INVTYPE_CHEST || target->InventoryType == INVTYPE_ROBE)))
-            return false;
-    }
+    if (source->InventoryType != target->InventoryType && !IsInvTypeMismatchAllowed(source, target))
+        return false;
 
     return true;
+}
+
+bool Transmogrification::IsSubclassMismatchAllowed(Player *player, const ItemTemplate *source, const ItemTemplate *target) const
+{
+    if (IsAllowed(source->ItemId)) return true;
+
+    uint32 sourceType  = source->InventoryType;
+    uint32 targetType  = target->InventoryType;
+    uint32 sourceClass = source->Class;
+    uint32 targetClass = target->Class;
+    uint32 sourceSub   = source->SubClass;
+    uint32 targetSub   = target->SubClass;
+
+    if (targetClass == ITEM_CLASS_WEAPON)
+    {
+        if (IsRangedWeapon(sourceClass, sourceSub))
+            return true;
+
+        if (AllowMixedWeaponTypes == MIXED_WEAPONS_MODERN)
+        {
+            switch (targetSub)
+            {
+                case ITEM_SUBCLASS_WEAPON_AXE:
+                case ITEM_SUBCLASS_WEAPON_SWORD:
+                case ITEM_SUBCLASS_WEAPON_MACE:
+                    if (sourceSub == ITEM_SUBCLASS_WEAPON_AXE   ||
+                        sourceSub == ITEM_SUBCLASS_WEAPON_SWORD ||
+                        sourceSub == ITEM_SUBCLASS_WEAPON_MACE   )
+                        return true;
+                    break;
+                case ITEM_SUBCLASS_WEAPON_AXE2:
+                case ITEM_SUBCLASS_WEAPON_SWORD2:
+                case ITEM_SUBCLASS_WEAPON_MACE2:
+                case ITEM_SUBCLASS_WEAPON_STAFF:
+                case ITEM_SUBCLASS_WEAPON_POLEARM:
+                    if (sourceSub == ITEM_SUBCLASS_WEAPON_AXE2   ||
+                        sourceSub == ITEM_SUBCLASS_WEAPON_SWORD2 ||
+                        sourceSub == ITEM_SUBCLASS_WEAPON_MACE2  ||
+                        sourceSub == ITEM_SUBCLASS_WEAPON_STAFF  ||
+                        sourceSub == ITEM_SUBCLASS_WEAPON_POLEARM )
+                        return true;
+                    break;
+            }
+        }
+        else if (AllowMixedWeaponTypes == MIXED_WEAPONS_LOOSE)
+        {
+            return true;
+        }
+        if (sourceSub == ITEM_SUBCLASS_WEAPON_MISC)
+            return sourceType == targetType;
+    }
+    else if (targetClass == ITEM_CLASS_ARMOR)
+    {
+        if (AllowMixedArmorTypes)
+            return true;
+        if (AllowLowerTiers && IsTieredArmorSubclass(targetSub) && TierAvailable(player, 0, sourceSub))
+            return true;
+        if (AllowMixedOffhandArmorTypes && IsValidOffhandArmor(targetSub, targetType) && IsValidOffhandArmor(sourceSub, sourceType))
+            return true;
+        if (sourceSub == ITEM_SUBCLASS_ARMOR_MISC)
+            return sourceType == targetType;
+    }
+
+    return false;
+}
+
+bool Transmogrification::IsInvTypeMismatchAllowed(const ItemTemplate *source, const ItemTemplate *target) const
+{
+    uint32 sourceType  = source->InventoryType;
+    uint32 targetType  = target->InventoryType;
+    uint32 sourceClass = source->Class;
+    uint32 targetClass = target->Class;
+    uint32 sourceSub   = source->SubClass;
+    uint32 targetSub   = target->SubClass;
+
+    if (targetClass == ITEM_CLASS_WEAPON)
+    {
+        if (IsRangedWeapon(sourceClass, sourceSub))
+            return true;
+
+        // Main-hand to offhand restrictions - see https://wowpedia.fandom.com/wiki/Transmogrification
+        if (AllowMixedWeaponTypes == MIXED_WEAPONS_LOOSE)
+            return true;
+        else if (targetType == INVTYPE_WEAPONMAINHAND || targetType == INVTYPE_WEAPONOFFHAND)
+        {
+            if (sourceType == INVTYPE_WEAPONMAINHAND || sourceType == INVTYPE_WEAPONOFFHAND)
+                return AllowMixedWeaponHandedness;
+            if (sourceType == INVTYPE_WEAPON)
+                return true;
+        }
+        else if (targetType == INVTYPE_WEAPON)
+        {
+            return sourceType == INVTYPE_WEAPONMAINHAND || (AllowMixedWeaponHandedness && sourceType == INVTYPE_WEAPONOFFHAND);
+        }
+    }
+    else if (targetClass == ITEM_CLASS_ARMOR)
+    {
+        if (AllowMixedOffhandArmorTypes && IsValidOffhandArmor(targetSub, targetType) && IsValidOffhandArmor(sourceSub, sourceType))
+            return true;
+        if (targetType == INVTYPE_CHEST || targetType == INVTYPE_ROBE)
+            return sourceType == INVTYPE_CHEST || sourceType == INVTYPE_ROBE;
+    }
+
+    return false;
+}
+
+bool Transmogrification::IsValidOffhandArmor(uint32 subclass, uint32 invType) const
+{
+    return subclass == ITEM_SUBCLASS_ARMOR_BUCKLER || (subclass == ITEM_SUBCLASS_ARMOR_MISC && invType == INVTYPE_HOLDABLE) || subclass == ITEM_SUBCLASS_ARMOR_SHIELD;
+}
+
+bool Transmogrification::IsTieredArmorSubclass(uint32 subclass) const
+{
+    return subclass == ITEM_SUBCLASS_ARMOR_PLATE || subclass == ITEM_SUBCLASS_ARMOR_MAIL || subclass == ITEM_SUBCLASS_ARMOR_LEATHER || subclass == ITEM_SUBCLASS_ARMOR_CLOTH;
 }
 
 bool Transmogrification::SuitableForTransmogrification(Player* player, ItemTemplate const* proto) const
@@ -721,11 +784,12 @@ bool Transmogrification::SuitableForTransmogrification(Player* player, ItemTempl
     if (IsAllowed(proto->ItemId))
         return true;
 
-    if (!IsItemTransmogrifiable(proto))
+    if (!IsItemTransmogrifiable(proto, player->GetGUID()))
         return false;
 
     //[AZTH] Yehonal
-    if (proto->SubClass > 0 && player->GetSkillValue(proto->GetSkill()) == 0)
+    uint32 subclassSkill = proto->GetSkill();
+    if (proto->SubClass > 0 && subclassSkill && player->GetSkillValue(proto->GetSkill()) == 0)
     {
         if (proto->Class == ITEM_CLASS_ARMOR && !AllowMixedArmorTypes)
         {
@@ -738,10 +802,10 @@ bool Transmogrification::SuitableForTransmogrification(Player* player, ItemTempl
         }
     }
 
-    if ((proto->Flags2 & ITEM_FLAGS_EXTRA_HORDE_ONLY) && player->GetTeamId() != TEAM_HORDE)
+    if (proto->HasFlag2(ITEM_FLAG2_FACTION_HORDE) && player->GetTeamId() != TEAM_HORDE)
         return false;
 
-    if ((proto->Flags2 & ITEM_FLAGS_EXTRA_ALLIANCE_ONLY) && player->GetTeamId() != TEAM_ALLIANCE)
+    if (proto->HasFlag2(ITEM_FLAG2_FACTION_ALLIANCE) && player->GetTeamId() != TEAM_ALLIANCE)
         return false;
 
     if (!IgnoreReqClass && (proto->AllowableClass & player->getClassMask()) == 0)
@@ -759,8 +823,11 @@ bool Transmogrification::SuitableForTransmogrification(Player* player, ItemTempl
             return false;
     }
 
-    if (!IgnoreReqLevel && player->getLevel() < proto->RequiredLevel)
+    if (!IgnoreLevelRequirement(player->GetGUID()) && player->GetLevel() < proto->RequiredLevel)
         return false;
+
+    if (AllowLowerTiers && TierAvailable(player, 0, proto->SubClass))
+        return true;
 
     if (!IgnoreReqSpell && proto->RequiredSpell != 0 && !player->HasSpell(proto->RequiredSpell))
         return false;
@@ -781,7 +848,7 @@ bool Transmogrification::SuitableForTransmogrification(ObjectGuid guid, ItemTemp
     if (IsAllowed(proto->ItemId))
         return true;
 
-    if (!IsItemTransmogrifiable(proto))
+    if (!IsItemTransmogrifiable(proto, guid))
         return false;
 
     auto playerGuid = guid.GetCounter();
@@ -824,10 +891,10 @@ bool Transmogrification::SuitableForTransmogrification(ObjectGuid guid, ItemTemp
         }
     }
 
-    if ((proto->Flags2 & ITEM_FLAGS_EXTRA_HORDE_ONLY) && playerTeamId != TEAM_HORDE)
+    if (proto->HasFlag2(ITEM_FLAG2_FACTION_HORDE) && playerTeamId != TEAM_HORDE)
         return false;
 
-    if ((proto->Flags2 & ITEM_FLAGS_EXTRA_ALLIANCE_ONLY) && playerTeamId != TEAM_ALLIANCE)
+    if (proto->HasFlag2(ITEM_FLAG2_FACTION_ALLIANCE) && playerTeamId != TEAM_ALLIANCE)
         return false;
 
     if (!IgnoreReqClass && (proto->AllowableClass & playerClassMask) == 0)
@@ -845,8 +912,11 @@ bool Transmogrification::SuitableForTransmogrification(ObjectGuid guid, ItemTemp
             return false;
     }
 
-    if (!IgnoreReqLevel && playerLevel < proto->RequiredLevel)
+    if (!IgnoreLevelRequirement(guid) && playerLevel < proto->RequiredLevel)
         return false;
+
+    if (AllowLowerTiers && TierAvailable(NULL, playerGuid, proto->SubClass))
+        return true;
 
     if (!IgnoreReqSpell && proto->RequiredSpell != 0 && !(CharacterDatabase.Query("SELECT `spell` FROM `character_spell` WHERE `guid` = {} and `spell` = {}", playerGuid, proto->RequiredSpell)))
         return false;
@@ -854,7 +924,57 @@ bool Transmogrification::SuitableForTransmogrification(ObjectGuid guid, ItemTemp
     return true;
 }
 
-bool Transmogrification::IsItemTransmogrifiable(ItemTemplate const* proto) const
+
+
+bool Transmogrification::TierAvailable(Player *player, int playerGuid, uint32 tier) const
+{
+    if (!player && !playerGuid) return false;
+    if (!IsTieredArmorSubclass(tier)) return false;
+
+    uint32 playerHighest = ITEM_SUBCLASS_ARMOR_CLOTH;
+    if (player)
+        playerHighest = GetHighestAvailableForPlayer(player);
+    else if (playerGuid)
+        playerHighest = GetHighestAvailableForPlayer(playerGuid);
+
+    switch (playerHighest)
+    {
+    case ITEM_SUBCLASS_ARMOR_PLATE:
+        return true;
+    case ITEM_SUBCLASS_ARMOR_MAIL:
+        return tier != ITEM_SUBCLASS_ARMOR_PLATE;
+    case ITEM_SUBCLASS_ARMOR_LEATHER:
+        return tier == ITEM_SUBCLASS_ARMOR_LEATHER || tier == ITEM_SUBCLASS_ARMOR_CLOTH;
+    case ITEM_SUBCLASS_ARMOR_CLOTH:
+        return tier == ITEM_SUBCLASS_ARMOR_CLOTH;
+    }
+
+    return true;
+}
+
+uint32 Transmogrification::GetHighestAvailableForPlayer(int playerGuid) const
+{
+    for (int i = 0; i < 4; i++)
+    {
+        if (CharacterDatabase.Query("SELECT `spell` FROM `character_spell` WHERE `guid` = {} and `spell` = {}", playerGuid, AllArmorSpellIds[i]))
+            return AllArmorTiers[i];
+    }
+
+    return ITEM_SUBCLASS_ARMOR_CLOTH;
+}
+
+uint32 Transmogrification::GetHighestAvailableForPlayer(Player *player) const
+{
+    for (int i = 0; i < 4; i++)
+    {
+        if (player->HasSpell(AllArmorSpellIds[i]))
+            return AllArmorTiers[i];
+    }
+
+    return ITEM_SUBCLASS_ARMOR_CLOTH;
+}
+
+bool Transmogrification::IsItemTransmogrifiable(ItemTemplate const* proto, ObjectGuid const &playerGuid) const
 {
     if (!proto)
         return false;
@@ -865,7 +985,7 @@ bool Transmogrification::IsItemTransmogrifiable(ItemTemplate const* proto) const
     if (!AllowFishingPoles && proto->Class == ITEM_CLASS_WEAPON && proto->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE)
         return false;
 
-    if (!IsAllowedQuality(proto->Quality)) // (proto->Quality == ITEM_QUALITY_LEGENDARY)
+    if (!IsAllowedQuality(proto->Quality, playerGuid)) // (proto->Quality == ITEM_QUALITY_LEGENDARY)
         return false;
 
     // If World Event is not active, prevent using event dependant items
@@ -918,16 +1038,16 @@ bool Transmogrification::IsNotAllowed(uint32 entry) const
     return NotAllowed.find(entry) != NotAllowed.end();
 }
 
-bool Transmogrification::IsAllowedQuality(uint32 quality) const
+bool Transmogrification::IsAllowedQuality(uint32 quality, ObjectGuid const &playerGuid) const
 {
     switch (quality)
     {
-        case ITEM_QUALITY_POOR: return AllowPoor;
-        case ITEM_QUALITY_NORMAL: return AllowCommon;
+        case ITEM_QUALITY_POOR: return AllowPoor || IsPlusFeatureEligible(playerGuid, PLUS_FEATURE_GREY_ITEMS);
+        case ITEM_QUALITY_NORMAL: return AllowCommon || IsPlusFeatureEligible(playerGuid, PLUS_FEATURE_GREY_ITEMS);
         case ITEM_QUALITY_UNCOMMON: return AllowUncommon;
         case ITEM_QUALITY_RARE: return AllowRare;
         case ITEM_QUALITY_EPIC: return AllowEpic;
-        case ITEM_QUALITY_LEGENDARY: return AllowLegendary;
+        case ITEM_QUALITY_LEGENDARY: return AllowLegendary || IsPlusFeatureEligible(playerGuid, PLUS_FEATURE_LEGENDARY_ITEMS);
         case ITEM_QUALITY_ARTIFACT: return AllowArtifact;
         case ITEM_QUALITY_HEIRLOOM: return AllowHeirloom;
         default: return false;
@@ -960,10 +1080,10 @@ void Transmogrification::LoadConfig(bool reload)
 
     if (reload) // dont store presets for nothing
     {
-        SessionMap const& sessions = sWorld->GetAllSessions();
-        for (SessionMap::const_iterator it = sessions.begin(); it != sessions.end(); ++it)
+        auto const& sessions = sWorldSessionMgr->GetAllSessions();
+        for (auto const& session : sessions)
         {
-            if (Player* player = it->second->GetPlayer())
+            if (Player* player = session.second->GetPlayer())
             {
                 // skipping session check
                 UnloadPlayerSets(player->GetGUID());
@@ -1014,6 +1134,8 @@ void Transmogrification::LoadConfig(bool reload)
     AllowTradeable = sConfigMgr->GetOption<bool>("Transmogrification.AllowTradeable", false);
 
     AllowMixedArmorTypes = sConfigMgr->GetOption<bool>("Transmogrification.AllowMixedArmorTypes", false);
+    AllowLowerTiers = sConfigMgr->GetOption<bool>("Transmogrification.AllowLowerTiers", false);
+    AllowMixedOffhandArmorTypes = sConfigMgr->GetOption<bool>("Transmogrification.AllowMixedOffhandArmorTypes", false);
     AllowMixedWeaponHandedness = sConfigMgr->GetOption<bool>("Transmogrification.AllowMixedWeaponHandedness", false);
     AllowFishingPoles = sConfigMgr->GetOption<bool>("Transmogrification.AllowFishingPoles", false);
 
@@ -1027,7 +1149,9 @@ void Transmogrification::LoadConfig(bool reload)
     IgnoreReqEvent = sConfigMgr->GetOption<bool>("Transmogrification.IgnoreReqEvent", false);
     IgnoreReqStats = sConfigMgr->GetOption<bool>("Transmogrification.IgnoreReqStats", false);
     UseCollectionSystem = sConfigMgr->GetOption<bool>("Transmogrification.UseCollectionSystem", true);
+    UseVendorInterface = sConfigMgr->GetOption<bool>("Transmogrification.UseVendorInterface", false);
     AllowHiddenTransmog = sConfigMgr->GetOption<bool>("Transmogrification.AllowHiddenTransmog", true);
+    HiddenTransmogIsFree = sConfigMgr->GetOption<bool>("Transmogrification.HiddenTransmogIsFree", true);
     TrackUnusableItems = sConfigMgr->GetOption<bool>("Transmogrification.TrackUnusableItems", true);
     RetroActiveAppearances = sConfigMgr->GetOption<bool>("Transmogrification.RetroActiveAppearances", true);
     ResetRetroActiveAppearances = sConfigMgr->GetOption<bool>("Transmogrification.ResetRetroActiveAppearancesFlag", false);
@@ -1039,6 +1163,40 @@ void Transmogrification::LoadConfig(bool reload)
     {
         TokenEntry = 49426;
     }
+
+    /* TransmogPlus */
+    IsTransmogPlusEnabled = sConfigMgr->GetOption<bool>("Transmogrification.EnablePlus", false);
+
+    plusDataMap.clear();
+
+    std::string stringMembershipIds = sConfigMgr->GetOption<std::string>("Transmogrification.MembershipLevels", "");
+    for (auto& itr : Acore::Tokenize(stringMembershipIds, ',', false))
+    {
+        plusDataMap[PLUS_FEATURE_GREY_ITEMS].push_back(Acore::StringTo<uint32>(itr).value());
+    }
+
+    stringMembershipIds = sConfigMgr->GetOption<std::string>("Transmogrification.MembershipLevelsLegendary", "");
+    for (auto& itr : Acore::Tokenize(stringMembershipIds, ',', false))
+    {
+        plusDataMap[PLUS_FEATURE_LEGENDARY_ITEMS].push_back(Acore::StringTo<uint32>(itr).value());
+    }
+
+    stringMembershipIds = sConfigMgr->GetOption<std::string>("Transmogrification.MembershipLevelsPet", "");
+    for (auto& itr : Acore::Tokenize(stringMembershipIds, ',', false))
+    {
+        plusDataMap[PLUS_FEATURE_PET].push_back(Acore::StringTo<uint32>(itr).value());
+    }
+
+    stringMembershipIds = sConfigMgr->GetOption<std::string>("Transmogrification.MembershipLevelsSkipLevelReq", "");
+    for (auto& itr : Acore::Tokenize(stringMembershipIds, ',', false))
+    {
+        plusDataMap[PLUS_FEATURE_SKIP_LEVEL_REQ].push_back(Acore::StringTo<uint32>(itr).value());
+    }
+
+    PetSpellId = sConfigMgr->GetOption<uint32>("Transmogrification.PetSpellId", 2000100);
+
+    if (SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(PetSpellId))
+        PetEntry = spellInfo->Effects[EFFECT_0].MiscValue;
 }
 
 void Transmogrification::DeleteFakeFromDB(ObjectGuid::LowType itemLowGuid, CharacterDatabaseTransaction* trans /*= nullptr*/)
@@ -1055,6 +1213,35 @@ void Transmogrification::DeleteFakeFromDB(ObjectGuid::LowType itemLowGuid, Chara
         (*trans)->Append("DELETE FROM custom_transmogrification WHERE GUID = {}", itemLowGuid);
     else
         CharacterDatabase.Execute("DELETE FROM custom_transmogrification WHERE GUID = {}", itemGUID.GetCounter());
+}
+
+bool Transmogrification::IsPlusFeatureEligible(ObjectGuid const &playerGuid, uint32 feature) const
+{
+    if (!IsTransmogPlusEnabled)
+        return false;
+
+    auto it = plusDataMap.find(feature);
+    if (it == plusDataMap.end() || it->second.empty())
+        return false;
+
+    Player* player = ObjectAccessor::FindConnectedPlayer(playerGuid);
+
+    if (!player)
+        return false;
+
+    const auto membershipLevel = GetPlayerMembershipLevel(player);
+
+    if (!membershipLevel)
+        return false;
+
+    const auto& membershipLevels = it->second;
+    for (const auto& level : membershipLevels)
+    {
+        if (level == membershipLevel)
+            return true;
+    }
+
+    return false;
 }
 
 bool Transmogrification::GetEnableTransmogInfo() const
@@ -1097,6 +1284,14 @@ bool Transmogrification::GetAllowMixedArmorTypes() const
 {
     return AllowMixedArmorTypes;
 };
+bool Transmogrification::GetAllowLowerTiers() const
+{
+    return AllowLowerTiers;
+};
+bool Transmogrification::GetAllowMixedOffhandArmorTypes() const
+{
+    return AllowMixedOffhandArmorTypes;
+};
 uint8 Transmogrification::GetAllowMixedWeaponTypes() const
 {
     return AllowMixedWeaponTypes;
@@ -1105,12 +1300,18 @@ bool Transmogrification::GetUseCollectionSystem() const
 {
     return UseCollectionSystem;
 };
-
+bool Transmogrification::GetUseVendorInterface() const
+{
+    return UseVendorInterface;
+}
 bool Transmogrification::GetAllowHiddenTransmog() const
 {
     return AllowHiddenTransmog;
 }
-
+bool Transmogrification::GetHiddenTransmogIsFree() const
+{
+    return HiddenTransmogIsFree;
+}
 bool Transmogrification::GetAllowTradeable() const
 {
     return AllowTradeable;
